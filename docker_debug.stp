@@ -1,0 +1,59 @@
+#!/usr/bin/stap
+
+probe begin
+{
+	printf("Starting monitor filesystem operation\n");
+}
+
+probe kernel.function("vfs_mkdir")
+{
+	printf("vfs_mkdir %s(%d) [%s]: %s\n", execname(), pid(), pexecname(), reverse_path_walk($dentry));
+}
+
+probe kernel.function("vfs_rmdir")
+{
+	printf("vfs_rmdir %s(%d) [%s]: %s\n", execname(), pid(), pexecname(), reverse_path_walk($dentry));
+	print_backtrace()
+	print_ubacktrace()
+	//raise(19)	//SIGSTOP
+}
+
+probe kernel.function("vfs_mknod")
+{
+	target = reverse_path_walk($dentry);
+	printf("vfs_mknod %s(%d) [%s]: %s\n", execname(), pid(), pexecname(), target);
+
+	if(isinstr(target, "my_concerned_file")){
+		print_backtrace()
+		print_ubacktrace()
+		//raise(19)	//SIGSTOP
+		raise(3)	//SIGQUIT for dockerd process to print backtrace for golang
+	}
+}
+
+probe kernel.function("vfs_whiteout")
+{
+	target = reverse_path_walk($dentry);
+	//if(isinstr(target, "overlay2")){
+		printf("vfs_whiteout %s(%d) [%s]: %s\n", execname(), pid(), pexecname(), target);
+		print_backtrace();
+		print_ubacktrace();
+		//raise(19)	//SIGSTOP
+	//}
+}
+
+probe kernel.function("generic_setxattr")
+{
+	// Check the special extended attribue "trusted.overlay.opaque" for overlay2 filesystem whiteout purpose
+	printf("generic_setxattr %s(%d) [%s]: dir=%s name=%s\n", execname(), pid(), pexecname(), 
+		reverse_path_walk($dentry), kernel_string($name));
+	print_backtrace()
+	print_ubacktrace()
+	raise(19)	//SIGSTOP
+}
+
+probe kernel.function("setxattr")
+{
+	printf("setxattr %s(%d) [%s]: dir=%s name=%s\n", execname(), pid(), pexecname(), 
+		reverse_path_walk($d), kernel_string($name));
+}

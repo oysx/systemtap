@@ -1,0 +1,72 @@
+#!/usr/bin/stap
+// use command to find all symbols:
+// for example: stap -L 'syscall.{mount}'
+// stap -L 'kernel.function("propagate_mnt")'
+
+probe begin
+{
+	printf("Starting monitor mount propagate\n");
+}
+
+probe syscall.{mount}
+{
+	//if(execname() == "dockerd")
+	printf("syscall(%s) %s(%d) [%s]: %s=>%s (%s) ** %s ** %s\n", name, execname(), pid(), pexecname(),
+	    source, target, filesystemtype, mountflags_str, argstr);
+
+	// If mount on wanted mountpoint, send STOP signal to the caller thread
+	if(isinstr(target, "/proc/bus")) {
+		printf("stop...");
+		raise(19);	//SIGSTOP
+	}
+}
+
+probe syscall.{umount}
+{
+	printf("syscall(%s) %s(%d) [%s]: %s ** %s ** %s\n", name, execname(), pid(), pexecname(),
+	    target, flags_str, argstr);
+}
+
+probe kernel.function("do_change_type")
+{
+	printf("do_change_type %s(%d.%d): %s 0x%x\n", execname(), pid(), tid(), 
+		reverse_path_walk($path->dentry), $flag);
+}
+
+probe kernel.function("propagate_mnt")
+{
+	mountpoint = reverse_path_walk($dest_mp->m_dentry);
+	mountflags = @cast(&$dest_mnt->mnt, "struct vfsmount")->mnt_flags;
+	mountname = $dest_mnt->mnt_mp ? reverse_path_walk($dest_mnt->mnt_mp->m_dentry) : "-";
+	try{
+		mountnamespace = $dest_mnt->mnt_ns ? $dest_mnt->mnt_ns->proc_inum : 0xffffffff;
+	}catch(msg){
+		mountnamespace = 0xffffffff;
+	}
+
+	printf("propagate_mnt %s(%d.%d): dst: name=%s ns=%d flag=0x%x, mountpoint: %s\n", execname(), pid(), tid(), 
+		mountname, mountnamespace, mountflags, mountpoint);
+}
+
+probe kernel.function("propagate_one")
+{
+	mountId = $m->mnt_id;
+	mountGrpId = $m->mnt_group_id;
+	mountPointBase = reverse_path_walk($mp->m_dentry);
+	mountPoint = reverse_path_walk($m->mnt_mountpoint);
+	mountRoot = reverse_path_walk(@cast(&$m->mnt, "struct vfsmount")->mnt_root);
+	try{
+		mountNamespace = $m->mnt_ns->proc_inum;
+	}catch(msg){
+		mountNamespace = 0xffffffff;
+	}
+
+	printf("propagate_one %s(%d.%d): ns=%d mntId=%d mntGrpId=%d: %s=>%s mnt_root=%s\n", execname(), pid(), tid(), 
+		mountNamespace, 
+		mountId, 
+		mountGrpId, 
+		mountPointBase, 
+		mountPoint, 
+		mountRoot);
+
+}
